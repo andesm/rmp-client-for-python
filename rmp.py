@@ -2,9 +2,10 @@
 # coding=utf-8
 
 import copy
-import math
 import os
 import random
+
+import math
 import select
 import shutil
 import signal
@@ -14,10 +15,10 @@ import termios
 import json
 import requests
 from mutagen.mp4 import MP4
+from mutagen.easyid3 import EasyID3
 
 
 class RmpRank:
-
     def __init__(self, json_data, file):
         if json_data is None:
             self.file = file
@@ -33,10 +34,56 @@ class RmpRank:
         self.repeat = self.json_data['repeat']
         self.score = self.json_data['score']
 
+    def set_id(self, json_data):
+        self.json_data = json_data
+        self.id = json_data['id']
+
     def _make_rmp_from_tag(self):
+        if self.file.endswith(".m4a"):
+            return self._make_rmp_from_mp4()
+        elif self.file.endswith(".mp3"):
+            return self._make_rmp_from_mp3()
+        else:
+            print(self.get_music_path())
+            exit(1)
+
+    def _make_rmp_from_mp3(self):
+        tags = ('composer', 'genre', 'tracknumber', 'album', 'artist', 'date', 'title')
+
+        audio = EasyID3(self.get_music_path())
+
+        for tag in tags:
+            if tag not in audio or not audio[tag][0]:
+                if tag == 'tracknumber':
+                    audio[tag] = ['0']
+                else:
+                    audio[tag] = ['none']
+
+        file_url = self.file.replace(' ', '%20')
+
+        return {'title': audio['title'][0][:100],
+                'album': audio['album'][0],
+                'artist': audio['artist'][0],
+                'genre': audio['genre'][0],
+                'file': self.file,
+                'source': file_url,
+                'image': 'none',
+                'trackNumber': int(audio['tracknumber'][0]),
+                'totalTrackCount': 0,
+                'duration': 0,
+                'site': 'http://kotetu.flg.jp/~andesm/music/',
+                'now': 0,
+                'skip': 0,
+                'count': 0,
+                'repeat': 0,
+                'score': 0,
+                'id': 0}
+
+    def _make_rmp_from_mp4(self):
         tags = ('\xa9nam', '\xa9alb', '\xa9ART', '\xa9gen', 'trkn')
 
         audio = MP4(self.get_music_path())
+
         for tag in tags:
             if tag not in audio:
                 if tag == 'trkn':
@@ -45,13 +92,14 @@ class RmpRank:
                     audio[tag] = ['none']
         file_url = self.file.replace(' ', '%20')
         genre_mi = audio['\xa9gen'][0].replace('/', ',')
+
         return {'title': audio['\xa9nam'][0],
                 'album': audio['\xa9alb'][0],
                 'artist': audio['\xa9ART'][0],
                 'genre': genre_mi,
                 'file': self.file,
                 'source': file_url,
-                'image': 'album_art.jpg',
+                'image': 'none',
                 'trackNumber': audio['trkn'][0][0],
                 'totalTrackCount': audio['trkn'][0][1],
                 'duration': 0,
@@ -60,10 +108,11 @@ class RmpRank:
                 'skip': 0,
                 'count': 0,
                 'repeat': 0,
-                'score': 0}
+                'score': 0,
+                'id': 0}
 
     def get_music_path(self):
-        return 'music/' + self.file
+        return 'Music/' + self.file
 
     def play_now(self):
         if self.now == 0:
@@ -91,7 +140,10 @@ class RmpRank:
         self.skip = int(self.skip / 2)
         self.score = self.count + self.repeat - (self.now + self.skip)
 
-    def to_json(self):
+    def to_post_json(self):
+        return json.dumps(self.json_data, ensure_ascii=False).encode("utf-8")
+
+    def to_put_json(self):
         self.json_data['now'] = self.now
         self.json_data['skip'] = self.skip
         self.json_data['count'] = self.count
@@ -109,6 +161,7 @@ class MusicProvider:
         self.next = 0
         self.count = 0
         self.new = 0
+        self.now_music = None
 
         self.client = requests.session()
         self.client.get(MusicProvider.SITE_URL + 'rmp/api-auth/login/')
@@ -134,59 +187,69 @@ class MusicProvider:
             if self.count < rmp.count:
                 self.count = rmp.count
 
-        for root, _, files in os.walk("./music"):
+        for root, _, files in os.walk("./Music"):
             for file in files:
-                if file.endswith(".m4a"):
+                if file.endswith(".m4a") or file.endswith(".mp3"):
                     file = os.path.join(root, file)[8:]
                     if file not in music_file:
-                        rmp = RmpRank(None, file)
-                        self.rmp_data_list.append(rmp)
+                        rmp_data = RmpRank(None, file)
+                        self._post_rmp_data(rmp_data)
+                        self.rmp_data_list.append(rmp_data)
                         self.new += 1
-                        self.now_music = rmp
-                        self.now_music.json_data = self._post_rmp_data()
 
         sorted_rmp_data_list = sorted(self.rmp_data_list,
                                       key=lambda rmp: rmp.score,
                                       reverse=True)
-        i = 0
-        shutil.rmtree('portable')
-        os.mkdir('portable')
-        for rmp in sorted_rmp_data_list:
-            os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
-            i += 1
-            if i == 300:
-                break
+        random.shuffle(self.rmp_data_list)
+        self.rmp_data_iterator = iter(self.rmp_data_list)
+        self._set_next_now_music()
 
-    def _post_rmp_data(self):
+        #i = 0
+        #shutil.rmtree('portable')
+        #os.mkdir('portable')
+        #for rmp in sorted_rmp_data_list:
+        #    os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
+        #    i += 1
+        #    if i == 300:
+        #        break
+
+    def _post_rmp_data(self, rmp_data):
         url = MusicProvider.SITE_URL + 'rmp/music/'
         csrftoken = self.client.cookies['csrftoken']
         r = self.client.post(url,
-                             data=self.now_music.to_json(),
+                             data=rmp_data.to_post_json(),
                              headers={'X-CSRFToken': csrftoken,
                                       'content-type': 'application/json'})
-        return r.json()
+        print(rmp_data.json_data)
+        print(r.text)
+        rmp_data.set_id(r.json())
 
     def _put_rmp_data(self):
         url = MusicProvider.SITE_URL + 'rmp/music/' + str(self.now_music.id) + '/'
         csrftoken = self.client.cookies['csrftoken']
         self.client.put(url,
-                        data=self.now_music.to_json(),
+                        data=self.now_music.to_put_json(),
                         headers={'X-CSRFToken': csrftoken,
                                  'content-type': 'application/json'})
 
-    def get_now_music(self):
-        random.shuffle(self.rmp_data_list)
-        for self.now_music in self.rmp_data_list:
+    def _set_next_now_music(self):
+        while True:
+            self.now_music = next(self.rmp_data_iterator, None)
+            if self.now_music is None:
+                self.rmp_data_iterator = iter(self.rmp_data_list)
+                self.now_music = next(self.rmp_data_iterator, None)
             if self.now_music.play_now():
-                yield self.now_music
+                break
 
     def handle_completion(self):
         self.now_music.play_normal()
         self._put_rmp_data()
+        self._set_next_now_music()
 
     def handle_skip_to_next(self):
         self.now_music.play_skip()
         self._put_rmp_data()
+        self._set_next_now_music()
 
     def handle_skip_to_previous(self):
         self.now_music.play_back()
@@ -320,5 +383,4 @@ if __name__ == "__main__":
     terminal_view.print_statistics()
 
     while True:
-        for now_music in music_provider.get_now_music():
-            terminal_view.wait_command()
+        terminal_view.wait_command()
