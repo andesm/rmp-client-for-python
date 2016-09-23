@@ -204,10 +204,10 @@ class MusicProvider:
         self.rmp_data_iterator = iter(self.rmp_data_list)
         self._set_next_now_music()
 
-        # i = 0
-        # shutil.rmtree('portable')
-        # os.mkdir('portable')
-        # for rmp in sorted_rmp_data_list:
+        #i = 0
+        #shutil.rmtree('portable')
+        #os.mkdir('portable')
+        #for rmp in sorted_rmp_data_list:
         #    os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
         #    i += 1
         #    if i == 300:
