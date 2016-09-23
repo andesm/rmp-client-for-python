@@ -220,8 +220,6 @@ class MusicProvider:
                              data=rmp_data.to_post_json(),
                              headers={'X-CSRFToken': csrftoken,
                                       'content-type': 'application/json'})
-        print(rmp_data.json_data)
-        print(r.text)
         rmp_data.set_id(r.json())
 
     def _put_rmp_data(self):
