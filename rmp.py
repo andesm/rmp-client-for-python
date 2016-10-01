@@ -7,7 +7,6 @@ import random
 
 import math
 import select
-import shutil
 import signal
 import sys
 import termios
@@ -187,15 +186,22 @@ class MusicProvider:
             if self.count < rmp.count:
                 self.count = rmp.count
 
+        music_master = {}
+
         for root, _, files in os.walk("./Music"):
             for file in files:
                 if file.endswith(".m4a") or file.endswith(".mp3"):
                     file = os.path.join(root, file)[8:]
+                    music_master[file] = True
                     if file not in music_file:
                         rmp_data = RmpRank(None, file)
                         self._post_rmp_data(rmp_data)
                         self.rmp_data_list.append(rmp_data)
                         self.new += 1
+
+        for file in music_file:
+            if file not in music_master:
+                self._delete_rmp_data(music_file[file].id)
 
         sorted_rmp_data_list = sorted(self.rmp_data_list,
                                       key=lambda rmp: rmp.score,
@@ -230,6 +236,13 @@ class MusicProvider:
                         headers={'X-CSRFToken': csrftoken,
                                  'content-type': 'application/json'})
 
+    def _delete_rmp_data(self, id):
+        url = MusicProvider.SITE_URL + 'rmp/music/' + str(id) + '/'
+        csrftoken = self.client.cookies['csrftoken']
+        self.client.delete(url,
+                           headers={'X-CSRFToken': csrftoken,
+                                    'content-type': 'application/json'})
+
     def _set_next_now_music(self):
         while True:
             self.now_music = next(self.rmp_data_iterator, None)
@@ -260,7 +273,7 @@ class Playback:
 
     def play(self):
         self.pid = os.fork()
-        if self.pid == 0:
+        if not self.pid:
             os.execl('/usr/bin/mplayer',
                      'mplayer',
                      '-novideo',
