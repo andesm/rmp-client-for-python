@@ -7,9 +7,12 @@
       <w>csrftoken</w>
       <w>disp</w>
       <w>getch</w>
+      <w>mkdir</w>
       <w>mplayer</w>
       <w>novideo</w>
       <w>rlist</w>
+      <w>rmtree</w>
+      <w>shutil</w>
       <w>tracknumber</w>
       <w>trkn</w>
       <w>zpid</w>

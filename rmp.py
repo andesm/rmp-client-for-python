@@ -156,11 +156,14 @@ class MusicProvider:
 
     def __init__(self):
         self.rmp_data_list = []
+        self.now_music = None
+        self.print_command_before = None
+        self.print_command_after = None
+
         self.all = 0
         self.next = 0
         self.count = 0
         self.new = 0
-        self.now_music = None
 
         self.client = requests.session()
         self.client.get(MusicProvider.SITE_URL + 'rmp/api-auth/login/')
@@ -203,21 +206,24 @@ class MusicProvider:
             if file not in music_master:
                 self._delete_rmp_data(music_file[file].id)
 
-        sorted_rmp_data_list = sorted(self.rmp_data_list,
-                                      key=lambda rmp: rmp.score,
-                                      reverse=True)
         random.shuffle(self.rmp_data_list)
         self.rmp_data_iterator = iter(self.rmp_data_list)
         self._set_next_now_music()
 
-        #i = 0
-        #shutil.rmtree('portable')
-        #os.mkdir('portable')
-        #for rmp in sorted_rmp_data_list:
-        #    os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
-        #    i += 1
-        #    if i == 300:
-        #        break
+        '''
+        sorted_rmp_data_list = sorted(self.rmp_data_list,
+                                      key=lambda rmp: rmp.score,
+                                      reverse=True)
+        i = 0
+        shutil.rmtree('portable')
+        os.mkdir('portable')
+        for rmp in sorted_rmp_data_list:
+           os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
+           i += 1
+           if i == 300:
+               break
+
+        '''
 
     def _post_rmp_data(self, rmp_data):
         url = MusicProvider.SITE_URL + 'rmp/music/'
@@ -236,8 +242,8 @@ class MusicProvider:
                         headers={'X-CSRFToken': csrftoken,
                                  'content-type': 'application/json'})
 
-    def _delete_rmp_data(self, id):
-        url = MusicProvider.SITE_URL + 'rmp/music/' + str(id) + '/'
+    def _delete_rmp_data(self, mid):
+        url = MusicProvider.SITE_URL + 'rmp/music/' + str(mid) + '/'
         csrftoken = self.client.cookies['csrftoken']
         self.client.delete(url,
                            headers={'X-CSRFToken': csrftoken,
@@ -253,17 +259,23 @@ class MusicProvider:
                 break
 
     def handle_completion(self):
+        self.print_command_before('      ', self.now_music)
         self.now_music.play_normal()
+        self.print_command_after(self.now_music)
         self._put_rmp_data()
         self._set_next_now_music()
 
     def handle_skip_to_next(self):
+        self.print_command_before('skip  ', self.now_music)
         self.now_music.play_skip()
+        self.print_command_after(self.now_music)
         self._put_rmp_data()
         self._set_next_now_music()
 
     def handle_skip_to_previous(self):
+        self.print_command_before('repeat', self.now_music)
         self.now_music.play_back()
+        self.print_command_after(self.now_music)
 
 
 class Playback:
@@ -294,11 +306,12 @@ class Playback:
 
 
 class TerminalView:
-    command_disp = {'b': 'repeat', 's': 'skip  ', 'n': '      '}
-
     def __init__(self, music_provider, playback):
         self.music_provider = music_provider
+        self.music_provider.print_command_before = self._print_command_before
+        self.music_provider.print_command_after = self._print_command_after
         self.playback = playback
+        self.now_music = None
 
     def print_statistics(self):
         print("Next  : %4d" % self.music_provider.next)
@@ -308,7 +321,7 @@ class TerminalView:
 
     def wait_command(self):
         while True:
-            self._print_header()
+            self._print_header(self.music_provider.now_music)
             self.playback.play()
 
             command = self._get_command()
@@ -316,16 +329,12 @@ class TerminalView:
             if command == 'q':
                 exit(0)
 
-            self._print_command_before(command)
-
             if command == 'b':
                 self.music_provider.handle_skip_to_previous()
             elif command == 's':
                 self.music_provider.handle_skip_to_next()
             elif command == 'n':
                 self.music_provider.handle_completion()
-
-            self._print_command_after()
 
             if command == 'b':
                 continue
@@ -361,28 +370,31 @@ class TerminalView:
 
         return command
 
-    def _print_header(self):
+    @staticmethod
+    def _print_header(music):
         print("- %s [sc: %d, sk: %d, co: %d, re: %d]"
-              % (self.music_provider.now_music.file,
-                 self.music_provider.now_music.score,
-                 self.music_provider.now_music.skip,
-                 self.music_provider.now_music.count,
-                 self.music_provider.now_music.repeat))
+              % (music.file,
+                 music.score,
+                 music.skip,
+                 music.count,
+                 music.repeat))
 
-    def _print_command_before(self, command):
+    @staticmethod
+    def _print_command_before(command, music):
         print("    %s [sc: %d, sk: %d, co: %d, re: %d] -> "
-              % (TerminalView.command_disp[command],
-                 self.music_provider.now_music.score,
-                 self.music_provider.now_music.skip,
-                 self.music_provider.now_music.count,
-                 self.music_provider.now_music.repeat), end='')
+              % (command,
+                 music.score,
+                 music.skip,
+                 music.count,
+                 music.repeat), end='')
 
-    def _print_command_after(self):
+    @staticmethod
+    def _print_command_after(music):
         print("[sc: %d, sk: %d, co: %d, re: %d]"
-              % (self.music_provider.now_music.score,
-                 self.music_provider.now_music.skip,
-                 self.music_provider.now_music.count,
-                 self.music_provider.now_music.repeat))
+              % (music.score,
+                 music.skip,
+                 music.count,
+                 music.repeat))
 
 
 if __name__ == "__main__":
