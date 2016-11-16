@@ -6,6 +6,7 @@
       <w>csrfmiddlewaretoken</w>
       <w>csrftoken</w>
       <w>disp</w>
+      <w>djangoadmin</w>
       <w>getch</w>
       <w>mkdir</w>
       <w>mplayer</w>

@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # coding=utf-8
-
+import argparse
 import copy
 import os
 import random
@@ -13,6 +13,7 @@ import termios
 
 import json
 import requests
+import shutil
 from mutagen.mp4 import MP4
 from mutagen.easyid3 import EasyID3
 
@@ -32,8 +33,10 @@ class RmpRank:
         self.count = self.json_data['count']
         self.repeat = self.json_data['repeat']
         self.score = self.json_data['score']
+        self.ranking = 0
 
     def set_id(self, json_data):
+        print(json_data)
         self.json_data = json_data
         self.id = json_data['id']
 
@@ -152,9 +155,9 @@ class RmpRank:
 
 
 class MusicProvider:
-    SITE_URL = 'http://192.168.1.168/app/'
+    SITE_URL = 'https://flg.jp/apps/'
 
-    def __init__(self):
+    def __init__(self, sorted_rmp):
         self.rmp_data_list = []
         self.now_music = None
         self.print_command_before = None
@@ -164,18 +167,21 @@ class MusicProvider:
         self.next = 0
         self.count = 0
         self.new = 0
+        self.remove = 0
 
         self.client = requests.session()
         self.client.get(MusicProvider.SITE_URL + 'rmp/api-auth/login/')
         csrftoken = self.client.cookies['csrftoken']
         payload = {'next': '/app/rmp/',
                    'csrfmiddlewaretoken': csrftoken,
-                   'username': 'andesm',
-                   'password': 'AkdiJ352o',
+                   'username': 'admin',
+                   'password': 'djangoadmin',
                    'submit': 'Log in'}
-        self.client.post(MusicProvider.SITE_URL + 'rmp/api-auth/login/',
-                         data=payload)
+        self.client.post(MusicProvider.SITE_URL + 'rmp/api-auth/login/', data=payload)
         r = self.client.get(MusicProvider.SITE_URL + 'rmp/music/')
+        if r.status_code != 200:
+            raise Exception(r.text)
+
         rmp_json = r.json()
 
         music_file = {}
@@ -205,25 +211,32 @@ class MusicProvider:
         for file in music_file:
             if file not in music_master:
                 self._delete_rmp_data(music_file[file].id)
+                self.remove += 1
 
-        random.shuffle(self.rmp_data_list)
-        self.rmp_data_iterator = iter(self.rmp_data_list)
-        self._set_next_now_music()
-
-        '''
         sorted_rmp_data_list = sorted(self.rmp_data_list,
                                       key=lambda rmp: rmp.score,
                                       reverse=True)
-        i = 0
+
         shutil.rmtree('portable')
         os.mkdir('portable')
-        for rmp in sorted_rmp_data_list:
-           os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
-           i += 1
-           if i == 300:
-               break
+        for i, rmp in enumerate(sorted_rmp_data_list):
+            if i < 300:
+                os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
+            rmp.ranking = i + 1
 
-        '''
+        if sorted_rmp is True:
+            self.rmp_data_list = sorted_rmp_data_list
+        else:
+            random.shuffle(self.rmp_data_list)
+        self.rmp_data_iterator = iter(self.rmp_data_list)
+        self._set_next_now_music()
+
+    def _calc_rmp_ranking(self):
+        sorted_rmp_data_list = sorted(self.rmp_data_list,
+                                      key=lambda rmp: rmp.score,
+                                      reverse=True)
+        for i, rmp in enumerate(sorted_rmp_data_list):
+            rmp.ranking = i + 1
 
     def _post_rmp_data(self, rmp_data):
         url = MusicProvider.SITE_URL + 'rmp/music/'
@@ -232,15 +245,20 @@ class MusicProvider:
                              data=rmp_data.to_post_json(),
                              headers={'X-CSRFToken': csrftoken,
                                       'content-type': 'application/json'})
+        if r.status_code != 201:
+            raise Exception(r.text)
         rmp_data.set_id(r.json())
 
     def _put_rmp_data(self):
         url = MusicProvider.SITE_URL + 'rmp/music/' + str(self.now_music.id) + '/'
         csrftoken = self.client.cookies['csrftoken']
-        self.client.put(url,
-                        data=self.now_music.to_put_json(),
-                        headers={'X-CSRFToken': csrftoken,
-                                 'content-type': 'application/json'})
+        r = self.client.put(url,
+                            data=self.now_music.to_put_json(),
+                            headers={'X-CSRFToken': csrftoken,
+                                     'content-type': 'application/json'})
+        if r.status_code != 200:
+            raise Exception(r.text)
+            # print(r.text)
 
     def _delete_rmp_data(self, mid):
         url = MusicProvider.SITE_URL + 'rmp/music/' + str(mid) + '/'
@@ -259,23 +277,26 @@ class MusicProvider:
                 break
 
     def handle_completion(self):
-        self.print_command_before('      ', self.now_music)
+        self.print_command_before('', self.now_music)
         self.now_music.play_normal()
         self.print_command_after(self.now_music)
         self._put_rmp_data()
+        self._calc_rmp_ranking()
         self._set_next_now_music()
 
     def handle_skip_to_next(self):
-        self.print_command_before('skip  ', self.now_music)
+        self.print_command_before('skip', self.now_music)
         self.now_music.play_skip()
         self.print_command_after(self.now_music)
         self._put_rmp_data()
+        self._calc_rmp_ranking()
         self._set_next_now_music()
 
     def handle_skip_to_previous(self):
         self.print_command_before('repeat', self.now_music)
         self.now_music.play_back()
         self.print_command_after(self.now_music)
+        self._calc_rmp_ranking()
 
 
 class Playback:
@@ -314,10 +335,11 @@ class TerminalView:
         self.now_music = None
 
     def print_statistics(self):
-        print("Next  : %4d" % self.music_provider.next)
-        print("New   : %4d" % self.music_provider.new)
-        print("Count : %4d" % self.music_provider.count)
-        print("All   : %4d" % self.music_provider.all)
+        print("Next   : %4d" % self.music_provider.next)
+        print("New    : %4d" % self.music_provider.new)
+        print("Remove : %4d" % self.music_provider.remove)
+        print("Count  : %4d" % self.music_provider.count)
+        print("All    : %4d" % self.music_provider.all)
 
     def wait_command(self):
         while True:
@@ -372,8 +394,10 @@ class TerminalView:
 
     @staticmethod
     def _print_header(music):
-        print("- %s [sc: %d, sk: %d, co: %d, re: %d]"
-              % (music.file,
+        print("- %d %s\n  [ra: %d, sc: %d, sk: %d, co: %d, re: %d]"
+              % (music.id,
+                 music.file,
+                 music.ranking,
                  music.score,
                  music.skip,
                  music.count,
@@ -381,7 +405,7 @@ class TerminalView:
 
     @staticmethod
     def _print_command_before(command, music):
-        print("    %s [sc: %d, sk: %d, co: %d, re: %d] -> "
+        print("    %-6s [sc: %d, sk: %d, co: %d, re: %d] -> "
               % (command,
                  music.score,
                  music.skip,
@@ -398,8 +422,12 @@ class TerminalView:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Random/Sorted Music Player')
+    parser.add_argument('--sorted', action='store_true',
+                        help='sorted the musics')
+    args = parser.parse_args()
 
-    music_provider = MusicProvider()
+    music_provider = MusicProvider(args.sorted)
     playback = Playback(music_provider)
     terminal_view = TerminalView(music_provider, playback)
 
