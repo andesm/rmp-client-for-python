@@ -84,6 +84,7 @@ class RmpRank:
     def _make_rmp_from_mp4(self):
         tags = ('\xa9nam', '\xa9alb', '\xa9ART', '\xa9gen', 'trkn')
 
+        print(self.get_music_path())
         audio = MP4(self.get_music_path())
 
         for tag in tags:
@@ -116,11 +117,17 @@ class RmpRank:
     def get_music_path(self):
         return 'Music/' + self.file
 
-    def play_now(self):
-        if self.now == 0:
-            return True
+    def is_filter(self, filter_name, filter_word):
+        return not filter_name or filter_word in self.json_data[filter_name]
+
+    def play_now(self, filter_name, filter_word):
+        if self.is_filter(filter_name, filter_word):
+            if self.now <= 0:
+                return True
+            else:
+                self.now -= 1
+                return False
         else:
-            self.now -= 1
             return False
 
     def play_back(self):
@@ -128,10 +135,10 @@ class RmpRank:
         self.score = self.count + self.repeat - (self.now + self.skip)
 
     def play_skip(self):
-        self.now += self.skip + 1
         # 0 -> 1 -> 3 -> 6 -> 10 -> 15 -> 21 -> 28 -> 36
         n = (1 + math.sqrt(1 + 8 * self.skip)) / 2 + 1
         self.skip = int(((n - 1) * n) / 2)
+        self.now += self.skip + 1
         if 0 < self.repeat:
             self.repeat -= 1
         self.score = self.count + self.repeat - (self.now + self.skip)
@@ -156,8 +163,9 @@ class RmpRank:
 
 class MusicProvider:
     SITE_URL = 'https://flg.jp/apps/'
+    #SITE_URL = 'http://flg.jp:10080/apps/'
 
-    def __init__(self, sorted_rmp):
+    def __init__(self, sorted_rmp, filter_name, filter_word):
         self.rmp_data_list = []
         self.now_music = None
         self.print_command_before = None
@@ -168,16 +176,18 @@ class MusicProvider:
         self.count = 0
         self.new = 0
         self.remove = 0
+        self.filter_name = filter_name
+        self.filter_word = filter_word
 
         self.client = requests.session()
         self.client.get(MusicProvider.SITE_URL + 'rmp/api-auth/login/')
         csrftoken = self.client.cookies['csrftoken']
-        payload = {'next': '/app/rmp/',
+        payload = {'next': '/',
                    'csrfmiddlewaretoken': csrftoken,
                    'username': 'admin',
                    'password': 'djangoadmin',
                    'submit': 'Log in'}
-        self.client.post(MusicProvider.SITE_URL + 'rmp/api-auth/login/', data=payload)
+        self.client.post(MusicProvider.SITE_URL + 'rmp/api-auth/login/', data=payload, allow_redirects=False)
         r = self.client.get(MusicProvider.SITE_URL + 'rmp/music/')
         if r.status_code != 200:
             raise Exception(r.text)
@@ -189,11 +199,12 @@ class MusicProvider:
             rmp = RmpRank(data, None)
             self.rmp_data_list.append(rmp)
             music_file[rmp.file] = rmp
-            self.all += 1
-            if rmp.now == 0:
-                self.next += 1
-            if self.count < rmp.count:
-                self.count = rmp.count
+            if rmp.is_filter(self.filter_name, self.filter_word):
+                self.all += 1
+                if rmp.now == 0:
+                    self.next += 1
+                if self.count < rmp.count:
+                    self.count = rmp.count
 
         music_master = {}
 
@@ -221,7 +232,7 @@ class MusicProvider:
         os.mkdir('portable')
         for i, rmp in enumerate(sorted_rmp_data_list):
             if i < 300:
-                os.symlink('../music/' + rmp.file, 'portable/' + str(i) + '.m4a')
+                os.symlink('../Music/' + rmp.file, 'portable/' + str(i) + '.m4a')
             rmp.ranking = i + 1
 
         if sorted_rmp is True:
@@ -273,7 +284,7 @@ class MusicProvider:
             if self.now_music is None:
                 self.rmp_data_iterator = iter(self.rmp_data_list)
                 self.now_music = next(self.rmp_data_iterator, None)
-            if self.now_music.play_now():
+            if self.now_music.play_now(self.filter_name, self.filter_word):
                 break
 
     def handle_completion(self):
@@ -420,14 +431,22 @@ class TerminalView:
                  music.count,
                  music.repeat))
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Random/Sorted Music Player')
-    parser.add_argument('--sorted', action='store_true',
-                        help='sorted the musics')
+    parser.add_argument('-s', '--sorted', action='store_true',
+                        help='sorted musics')
+    parser.add_argument('-n', '--filter-name',
+                        metavar=('FILTER_NAME'),
+                        default='',
+                        choices=['title', 'album', 'artist', 'genre'],
+                        help='filter music name')
+    parser.add_argument('-w', '--filter-word',
+                        metavar=('FILTER_WORD'),
+                        default='',
+                        help='filter music word')
     args = parser.parse_args()
 
-    music_provider = MusicProvider(args.sorted)
+    music_provider = MusicProvider(args.sorted, args.filter_name, args.filter_word)
     playback = Playback(music_provider)
     terminal_view = TerminalView(music_provider, playback)
 
@@ -435,3 +454,5 @@ if __name__ == "__main__":
 
     while True:
         terminal_view.wait_command()
+
+
